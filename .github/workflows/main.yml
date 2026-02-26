@@ -16,4 +16,4 @@ jobs:
       - name: Lint check
         run: |
           # Solo verifica que el archivo principal no tenga errores de sintaxis
-          python -m py_compile app.py
+          python -m py_compile src/app.py
