@@ -3,16 +3,10 @@ import joblib
 import pandas as pd
 import numpy as np
 import random
+import requests
 
-# --- 1. CONFIGURACIÓN Y CARGA DE RECURSOS ---
+# --- 1. CONFIGURACIÓN  ---
 st.set_page_config(page_title="Credit Risk Expert System", layout="wide")
-
-@st.cache_resource
-def load_model():
-    # Carga el modelo entrenado (el archivo debe estar en la raíz)
-    return joblib.load('modelo_riesgo_final.joblib')
-
-model = load_model()
 
 # --- 2. ESTILOS PERSONALIZADOS (CSS) ---
 st.markdown("""
@@ -189,71 +183,89 @@ with centro:
                         st.write(f"• {err}")
                     st.info("Nota: Aunque su historial crediticio sea bueno, su capacidad de pago actual no permite esta obligación.")
 
-                # Inferencia del modelo de Machine Learning
                 else:
-                    probabilidad = model.predict_proba(input_data)[0][1]
+                    try:
+                        # Convertimos el DataFrame a un diccionario JSON
+                        datos_para_api = input_data.iloc[0].to_dict()
+                        
+                        # Llamada a la API de FastAPI (Asegúrate de que uvicorn esté corriendo)
+                        url_api = "http://127.0.0.1:8000/predict"
+                        respuesta = requests.post(url_api, json=datos_para_api)
+                        
+                        if respuesta.status_code == 200:
+                            resultado = respuesta.json()
+                            probabilidad = resultado["riesgo"]
+                            decision = resultado["decision"]
+                            aprobado = resultado["aprobado"]
 
-                    # Evaluación estándar basada puramente en el riesgo estadístico del modelo
-                    if probabilidad > 0.40:
-                        st.error(f"❌ RECHAZADO POR MODELO ESTADÍSTICO (Riesgo: {probabilidad:.2%})")
-                    else:
-                        st.success(f"✅ CRÉDITO APROBADO (Riesgo bajo: {probabilidad:.2%})")
-                        if puntaje_interno > 850:
-                            st.caption("Perfil de alta confianza detectado.")
+                            if not aprobado:
+                                st.error(f"❌ {decision} POR MODELO ESTADÍSTICO (Riesgo: {probabilidad:.2%})")
+                            else:
+                                st.success(f"✅ {decision} (Riesgo bajo: {probabilidad:.2%})")
+                                if puntaje_interno > 850:
+                                    st.caption("Perfil de alta confianza detectado.")
+                        else:
+                            st.error(f"Error en la API: Código {respuesta.status_code}")
+                            
+                    except Exception as e:
+                      st.error("⚠️ Error de conexión: La API no responde.")
+                      st.info("Asegúrate de haber iniciado la API con: uvicorn src.model_deploy:app --reload")
 
 
 # --- SECCIÓN DE MONITOREO Y DETECCIÓN DE DATA DRIFT ---
 # Este panel permite comparar las entradas actuales frente a las medias estadísticas del dataset de entrenamiento.
 st.markdown("---")
-with st.expander("🛠️ Panel de Control: Monitoreo de Data Drift"):
-    st.write("Análisis de estabilidad de variables: Producción vs. Entrenamiento (Baseline)")
-    
-    # 1. Parámetros obtenidos del análisis estadístico del dataset original (mean)
-    SALARIO_MEAN = 7695748.0
-    SCORE_MEAN = 791.46
-    EDAD_MEAN = 42.84
-    ENDEUDAMIENTO_MEAN = 0.9419 # ratio_endeudamiento (mean)
+# Solo mostramos el monitoreo si los datos ya fueron generados/validados
+if es_valida:
+    with st.expander("🛠️ Panel de Control: Monitoreo de Data Drift"):
+        st.write("Análisis de estabilidad de variables: Producción vs. Entrenamiento (Baseline)")
+        
+        # 1. Parámetros obtenidos del análisis estadístico del dataset original (mean)
+        SALARIO_MEAN = 7695748.0
+        SCORE_MEAN = 791.46
+        EDAD_MEAN = 42.84
+        ENDEUDAMIENTO_MEAN = 0.9419 # ratio_endeudamiento (mean)
 
-    col_d1, col_d2, col_d3 = st.columns(3)
-    
-    # --- Métrica 1: Drift Salarial ---
-    # Calculamos la desviación porcentual respecto a la media de 7.69M
-    drift_salario = ((salario - SALARIO_MEAN) / SALARIO_MEAN) * 100
-    col_d1.metric(
-        label="Drift Salarial", 
-        value=f"{salario/1e6:.2f}M", 
-        delta=f"{drift_salario:.1f}% vs Baseline",
-        delta_color="inverse"
-    )
-    
-    # --- Métrica 2: Drift de Score ---
-    # La media de puntaje_datacredito en el dataset es de 791.46
-    drift_score = ((puntaje_interno - SCORE_MEAN) / SCORE_MEAN) * 100
-    col_d2.metric(
-        label="Drift de Score", 
-        value=f"{puntaje_interno} pts", 
-        delta=f"{drift_score:.1f}% vs Baseline",
-        delta_color="normal"
-    )
+        col_d1, col_d2, col_d3 = st.columns(3)
+        
+        # --- Métrica 1: Drift Salarial ---
+        # Calculamos la desviación porcentual respecto a la media de 7.69M
+        drift_salario = ((salario - SALARIO_MEAN) / SALARIO_MEAN) * 100
+        col_d1.metric(
+            label="Drift Salarial", 
+            value=f"{salario/1e6:.2f}M", 
+            delta=f"{drift_salario:.1f}% vs Baseline",
+            delta_color="inverse"
+        )
+        
+        # --- Métrica 2: Drift de Score ---
+        # La media de puntaje_datacredito en el dataset es de 791.46
+        drift_score = ((puntaje_interno - SCORE_MEAN) / SCORE_MEAN) * 100
+        col_d2.metric(
+            label="Drift de Score", 
+            value=f"{puntaje_interno} pts", 
+            delta=f"{drift_score:.1f}% vs Baseline",
+            delta_color="normal"
+        )
 
-    # --- Métrica 3: Drift de Edad ---
-    # La media de edad_cliente es de 42.84 años
-    drift_edad = ((edad_simulada - EDAD_MEAN) / EDAD_MEAN) * 100
-    col_d3.metric(
-        label="Drift de Edad", 
-        value=f"{edad_simulada} años", 
-        delta=f"{drift_edad:.1f}% vs Baseline",
-        delta_color="off"
-    )
+        # --- Métrica 3: Drift de Edad ---
+        # La media de edad_cliente es de 42.84 años
+        drift_edad = ((edad_simulada - EDAD_MEAN) / EDAD_MEAN) * 100
+        col_d3.metric(
+            label="Drift de Edad", 
+            value=f"{edad_simulada} años", 
+            delta=f"{drift_edad:.1f}% vs Baseline",
+            delta_color="off"
+        )
 
-    # 2. Lógica de Alerta de Drift
-    # Se activan alertas si el desplazamiento (drift) supera umbrales de tolerancia estadística.
-    # Para el salario, dada su alta desviación estándar (std), se establece un umbral del 50%.
-    if abs(drift_salario) > 50 or abs(drift_score) > 20:
-        st.error("🚨 ALERTA DE DATA DRIFT: Se detectó un desplazamiento significativo en las variables de entrada.")
-        st.caption("Nota: El modelo puede presentar degradación en su capacidad predictiva debido a cambios en la población.")
-    else:
-        st.success("✅ Estabilidad de Datos: Las entradas actuales son coherentes con el perfil de entrenamiento.")
+        # 2. Lógica de Alerta de Drift
+        # Se activan alertas si el desplazamiento (drift) supera umbrales de tolerancia estadística.
+        # Para el salario, dada su alta desviación estándar (std), se establece un umbral del 50%.
+        if abs(drift_salario) > 50 or abs(drift_score) > 20:
+            st.error("🚨 ALERTA DE DATA DRIFT: Se detectó un desplazamiento significativo en las variables de entrada.")
+            st.caption("Nota: El modelo puede presentar degradación en su capacidad predictiva debido a cambios en la población.")
+        else:
+            st.success("✅ Estabilidad de Datos: Las entradas actuales son coherentes con el perfil de entrenamiento.")
 
-    # 3. Resumen de Calidad del Modelo
-    st.info(f"**Análisis de Ratio:** El ratio de endeudamiento actual es de {ratio_real_disponible:.4f} frente a una media histórica de {ENDEUDAMIENTO_MEAN:.4f}.")
+        # 3. Resumen de Calidad del Modelo
+        st.info(f"**Análisis de Ratio:** El ratio de endeudamiento actual es de {ratio_real_disponible:.4f} frente a una media histórica de {ENDEUDAMIENTO_MEAN:.4f}.")
